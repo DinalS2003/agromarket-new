@@ -13,12 +13,286 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
+class NeedsUpgradeException(
+    val userId: String,
+    val phone: String,
+    val maskedPhone: String
+) : Exception("This existing account needs to set up a username and password.")
+
 class AgroMarketRepository(
     val sessionManager: SessionManager
 ) {
     private val service = ApiClient.service
     val chatRepository: ChatRepository by lazy { ChatRepository(service, sessionManager) }
     private val localOrders = java.util.concurrent.ConcurrentHashMap<String, OrderItem>()
+
+    // Username & Credentials Auth
+    suspend fun checkUsernameAvailable(username: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        val clean = username.trim().lowercase()
+        if (clean.length < 3 || clean.length > 20 || !clean.matches(Regex("^[a-z0-9_]{3,20}$"))) {
+            return@withContext Result.success(false)
+        }
+        try {
+            val res = service.checkUsernameAvailable(mapOf("p_username" to clean))
+            if (res.isSuccessful && res.body() != null) {
+                Result.success(res.body()!!)
+            } else {
+                Result.failure(Exception("Failed to check username availability"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun lookupLoginAccount(identifier: String): Result<Map<String, Any>> = withContext(Dispatchers.IO) {
+        try {
+            val res = service.lookupLoginAccount(mapOf("p_identifier" to identifier.trim()))
+            if (res.isSuccessful && res.body() != null) {
+                Result.success(res.body()!!)
+            } else {
+                Result.failure(Exception("Could not look up account credentials"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun loginWithCredentials(identifier: String, password: String): Result<Map<String, Any>> = withContext(Dispatchers.IO) {
+        val cleanIdentifier = identifier.trim()
+        val cleanPassword = password.trim()
+        if (cleanIdentifier.isBlank() || cleanPassword.isBlank()) {
+            return@withContext Result.failure(Exception("Please enter both username/mobile and password."))
+        }
+
+        try {
+            val lookupRes = service.lookupLoginAccount(mapOf("p_identifier" to cleanIdentifier))
+            if (!lookupRes.isSuccessful || lookupRes.body() == null) {
+                return@withContext Result.failure(Exception("Incorrect username or password"))
+            }
+            val lookupData = lookupRes.body()!!
+            val status = lookupData["status"] as? String ?: "NOT_FOUND"
+
+            when (status) {
+                "NEEDS_UPGRADE" -> {
+                    val uid = lookupData["user_id"] as? String ?: ""
+                    val phone = lookupData["phone_e164"] as? String ?: ""
+                    val masked = lookupData["masked_phone"] as? String ?: "your registered phone"
+                    return@withContext Result.failure(NeedsUpgradeException(uid, phone, masked))
+                }
+                "OK" -> {
+                    val email = lookupData["email"] as? String
+                        ?: return@withContext Result.failure(Exception("Incorrect username or password"))
+                    val username = lookupData["username"] as? String
+                    val realUserId = lookupData["user_id"] as? String ?: ""
+                    val phone = lookupData["phone_e164"] as? String ?: ""
+
+                    val loginRes = service.loginWithPassword(mapOf("email" to email, "password" to cleanPassword))
+                    if (!loginRes.isSuccessful || loginRes.body() == null) {
+                        return@withContext Result.failure(Exception("Incorrect username or password"))
+                    }
+
+                    val tokenObj = loginRes.body()!!
+                    val realToken = tokenObj["access_token"] as? String
+                        ?: return@withContext Result.failure(Exception("Failed to obtain authentication access token"))
+                    val refreshToken = tokenObj["refresh_token"] as? String
+                    val expiresIn = (tokenObj["expires_in"] as? Number)?.toLong() ?: 2592000L
+
+                    val profileRes = try { service.getProfile("eq.$realUserId") } catch (e: Exception) { null }
+                    val existingProfile = profileRes?.body()?.firstOrNull()
+                    val isFarmer = try { service.getFarmer("eq.$realUserId").body()?.isNotEmpty() == true } catch (e: Exception) { false }
+
+                    sessionManager.saveAuthSession(
+                        token = realToken,
+                        userId = realUserId,
+                        phone = phone,
+                        fullName = existingProfile?.fullName ?: "",
+                        districtId = existingProfile?.districtId ?: 1,
+                        cityId = existingProfile?.cityId ?: 1,
+                        isFarmer = isFarmer,
+                        refreshToken = refreshToken,
+                        expiresInSeconds = expiresIn,
+                        email = email,
+                        password = cleanPassword,
+                        username = username
+                    )
+
+                    val respMap: Map<String, Any> = mapOf(
+                        "access_token" to realToken,
+                        "user" to mapOf(
+                            "id" to realUserId,
+                            "phone" to phone,
+                            "username" to (username ?: "")
+                        )
+                    )
+                    Result.success(respMap)
+                }
+                else -> {
+                    Result.failure(Exception("Incorrect username or password"))
+                }
+            }
+        } catch (e: NeedsUpgradeException) {
+            Result.failure(e)
+        } catch (e: Exception) {
+            Result.failure(Exception(e.message ?: "Authentication failed"))
+        }
+    }
+
+    suspend fun registerUserWithCredentials(
+        username: String,
+        password: String,
+        fullName: String,
+        nic: String,
+        phone: String,
+        districtId: Int,
+        cityId: Int
+    ): Result<Map<String, Any>> = withContext(Dispatchers.IO) {
+        val normalized = normalizeSriLankanPhone(phone)
+        val cleanUsername = username.trim().lowercase()
+        val cleanPassword = password.trim()
+
+        try {
+            val regRes = service.registerUserWithCredentials(
+                mapOf(
+                    "p_username" to cleanUsername,
+                    "p_password" to cleanPassword,
+                    "p_full_name" to fullName.trim(),
+                    "p_nic" to nic.trim().uppercase(),
+                    "p_phone_e164" to normalized,
+                    "p_district_id" to districtId,
+                    "p_city_id" to cityId
+                )
+            )
+
+            if (!regRes.isSuccessful || regRes.body() == null) {
+                val err = regRes.errorBody()?.string() ?: "Failed to register account credentials"
+                return@withContext Result.failure(Exception(err))
+            }
+
+            val regData = regRes.body()!!
+            val realUserId = regData["user_id"] as? String ?: ""
+            val email = regData["email"] as? String ?: "p${normalized.replace("+", "")}@agromarket.lk"
+
+            // Sign in to establish session
+            val loginRes = service.loginWithPassword(mapOf("email" to email, "password" to cleanPassword))
+            if (!loginRes.isSuccessful || loginRes.body() == null) {
+                return@withContext Result.failure(Exception("Account created but failed to establish session. Please log in."))
+            }
+
+            val tokenObj = loginRes.body()!!
+            val realToken = tokenObj["access_token"] as? String ?: ""
+            val refreshToken = tokenObj["refresh_token"] as? String
+            val expiresIn = (tokenObj["expires_in"] as? Number)?.toLong() ?: 2592000L
+
+            sessionManager.saveAuthSession(
+                token = realToken,
+                userId = realUserId,
+                phone = normalized,
+                fullName = fullName.trim(),
+                districtId = districtId,
+                cityId = cityId,
+                isFarmer = false,
+                refreshToken = refreshToken,
+                expiresInSeconds = expiresIn,
+                email = email,
+                password = cleanPassword,
+                username = cleanUsername
+            )
+
+            Result.success(mapOf("user_id" to realUserId, "username" to cleanUsername, "token" to realToken))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun upgradeUserCredentials(
+        userId: String,
+        username: String,
+        password: String
+    ): Result<Map<String, Any>> = withContext(Dispatchers.IO) {
+        val cleanUsername = username.trim().lowercase()
+        val cleanPassword = password.trim()
+        try {
+            val res = service.upgradeUserCredentials(
+                mapOf(
+                    "p_user_id" to userId,
+                    "p_username" to cleanUsername,
+                    "p_password" to cleanPassword
+                )
+            )
+            if (!res.isSuccessful || res.body() == null) {
+                val err = res.errorBody()?.string() ?: "Failed to update account credentials"
+                return@withContext Result.failure(Exception(err))
+            }
+            val data = res.body()!!
+            val email = data["email"] as? String ?: ""
+
+            // Log in with new credentials
+            val loginRes = service.loginWithPassword(mapOf("email" to email, "password" to cleanPassword))
+            if (loginRes.isSuccessful && loginRes.body() != null) {
+                val tokenObj = loginRes.body()!!
+                val realToken = tokenObj["access_token"] as? String ?: ""
+                val refreshToken = tokenObj["refresh_token"] as? String
+                val expiresIn = (tokenObj["expires_in"] as? Number)?.toLong() ?: 2592000L
+
+                val profileRes = try { service.getProfile("eq.$userId") } catch (e: Exception) { null }
+                val profile = profileRes?.body()?.firstOrNull()
+                val isFarmer = try { service.getFarmer("eq.$userId").body()?.isNotEmpty() == true } catch (e: Exception) { false }
+
+                sessionManager.saveAuthSession(
+                    token = realToken,
+                    userId = userId,
+                    phone = sessionManager.getUserPhone() ?: "",
+                    fullName = profile?.fullName ?: "",
+                    districtId = profile?.districtId ?: 1,
+                    cityId = profile?.cityId ?: 1,
+                    isFarmer = isFarmer,
+                    refreshToken = refreshToken,
+                    expiresInSeconds = expiresIn,
+                    email = email,
+                    password = cleanPassword,
+                    username = cleanUsername
+                )
+            } else {
+                sessionManager.saveUsername(cleanUsername)
+            }
+
+            Result.success(data)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun resetUserPassword(userId: String, newPassword: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val cleanPassword = newPassword.trim()
+        try {
+            val res = service.resetUserPassword(mapOf("p_user_id" to userId, "p_new_password" to cleanPassword))
+            if (res.isSuccessful) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(res.errorBody()?.string() ?: "Failed to reset password"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun changeUserPassword(oldPassword: String, newPassword: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val res = service.changeUserPassword(
+                mapOf(
+                    "p_old_password" to oldPassword.trim(),
+                    "p_new_password" to newPassword.trim()
+                )
+            )
+            if (res.isSuccessful) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(res.errorBody()?.string() ?: "Incorrect current password"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     // Districts & Cities - Strictly from Database
     suspend fun getDistricts(): Result<List<District>> = withContext(Dispatchers.IO) {

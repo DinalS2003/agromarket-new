@@ -138,6 +138,19 @@ secrets {
   ignoreList.add("TEXTLK_API_TOKEN")
   ignoreList.add("SUPABASE_ANON_KEY")
   ignoreList.add("SUPABASE_URL")
+  ignoreList.add("FCM_SERVICE_ACCOUNT_JSON")
+  ignoreList.add("OTP_API_KEY")
+  ignoreList.add("OTP_API_URL")
+  ignoreList.add("OTP_MODE")
+  ignoreList.add("OTP_SENDER_ID")
+  ignoreList.add("PAYHERE_MERCHANT_ID")
+  ignoreList.add("PAYHERE_MERCHANT_SECRET")
+  ignoreList.add("PAYHERE_MODE")
+  ignoreList.add("PAYHERE_NOTIFY_URL")
+  ignoreList.add("SEND_SMS_HOOK_SECRET")
+  ignoreList.add("SUPABASE_SERVICE_ROLE_KEY")
+  ignoreList.add("VITE_SUPABASE_ANON_KEY")
+  ignoreList.add("VITE_SUPABASE_URL")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

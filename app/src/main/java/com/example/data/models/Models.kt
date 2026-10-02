@@ -24,6 +24,8 @@ data class UserProfile(
     @Json(name = "full_name") val fullName: String,
     @Json(name = "district_id") val districtId: Int,
     @Json(name = "city_id") val cityId: Int,
+    @Json(name = "username") val username: String? = null,
+    @Json(name = "has_password") val hasPassword: Boolean = false,
     @Json(name = "is_suspended") val isSuspended: Boolean = false,
     @Json(name = "suspended_reason") val suspendedReason: String? = null,
     @Json(name = "created_at") val createdAt: String? = null

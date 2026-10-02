@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -20,14 +21,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.viewmodel.AuthViewModel
-
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import com.example.viewmodel.UsernameCheckStatus
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -37,63 +39,17 @@ fun SignUpScreen(
     onSignUpSuccess: () -> Unit,
     onFarmerSignUpSuccess: () -> Unit = onSignUpSuccess
 ) {
-    val authState by viewModel.authState.collectAsState()
-    val onboardingState by viewModel.onboardingState.collectAsState()
-
-    var step by remember { mutableIntStateOf(1) } // 1 = Details, 2 = OTP, 3 = Farm Details
-    var localError by remember { mutableStateOf<String?>(null) }
+    val state by viewModel.signUpState.collectAsState()
     var districtMenuExpanded by remember { mutableStateOf(false) }
     var cityMenuExpanded by remember { mutableStateOf(false) }
     var cultDistrictMenuExpanded by remember { mutableStateOf(false) }
     var cultCityMenuExpanded by remember { mutableStateOf(false) }
 
-    // If OTP was sent successfully and we're at step 1, advance to step 2
-    LaunchedEffect(authState.isOtpSent) {
-        if (authState.isOtpSent && step == 1) {
-            step = 2
-        }
-    }
-
-    // When OTP verification finishes:
-    // If farmer -> advance to step 3 (cultivation details). Farm details MUST be entered after verification!
-    // If buyer -> submit onboarding profile directly.
-    LaunchedEffect(authState.isSessionReady, authState.needsOnboarding) {
-        if (step == 2 && (authState.isSessionReady || authState.needsOnboarding) && !onboardingState.isComplete && !onboardingState.isSubmitting) {
-            if (onboardingState.isFarmerMode) {
-                step = 3
-                if (onboardingState.cultivationCities.isEmpty()) {
-                    viewModel.onCultivationDistrictSelected(onboardingState.selectedDistrictId)
-                }
-            } else {
-                viewModel.submitOnboarding()
-            }
-        }
-    }
-
-    // When registration completes:
-    // Farmers navigate directly to the listings page; buyers navigate to marketplace.
-    LaunchedEffect(onboardingState.isComplete) {
-        if (onboardingState.isComplete) {
-            if (onboardingState.isFarmerMode) {
-                onFarmerSignUpSuccess()
-            } else {
-                onSignUpSuccess()
-            }
-        }
-    }
-
     BackHandler {
-        when (step) {
-            3 -> {
-                step = 2
-            }
-            2 -> {
-                step = 1
-                viewModel.resetToPhoneInput()
-            }
-            else -> {
-                onBackToWelcome()
-            }
+        if (state.currentStep > 1) {
+            viewModel.stepBackInSignUp()
+        } else {
+            onBackToWelcome()
         }
     }
 
@@ -101,752 +57,566 @@ fun SignUpScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AppLogo(size = 28.dp, shape = RoundedCornerShape(8.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = when (step) {
-                                1 -> "Create Account"
-                                2 -> "Verify Mobile"
-                                else -> "Cultivation Details"
-                            },
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                    }
+                    Text(
+                        text = when (state.currentStep) {
+                            1 -> "Choose Username"
+                            2 -> "Profile Details"
+                            3 -> "Mobile & Password"
+                            else -> "Verify Phone"
+                        },
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
                 },
                 navigationIcon = {
                     IconButton(
                         onClick = {
-                            when (step) {
-                                3 -> step = 2
-                                2 -> {
-                                    step = 1
-                                    viewModel.resetToPhoneInput()
-                                }
-                                else -> onBackToWelcome()
+                            if (state.currentStep > 1) {
+                                viewModel.stepBackInSignUp()
+                            } else {
+                                onBackToWelcome()
                             }
-                        }
+                        },
+                        modifier = Modifier.testTag("signup_back_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
                         )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },
-        bottomBar = {
-            StickyBottomCTA {
-                when (step) {
-                    1 -> {
-                        PrimaryButton(
-                            text = "Continue to Verification",
-                            onClick = {
-                                localError = null
-                                val name = onboardingState.fullName.trim()
-                                val nic = onboardingState.nic.trim().uppercase()
-                                val phone = authState.phoneInput.trim()
-
-                                if (name.length < 2) {
-                                    localError = "Please enter your full official name."
-                                    return@PrimaryButton
-                                }
-
-                                val isValidNic = nic.matches(Regex("^[0-9]{9}[VX]$")) || nic.matches(Regex("^[0-9]{12}$"))
-                                if (!isValidNic) {
-                                    localError = "Invalid NIC format (e.g. 199012345678 or 901234567V)."
-                                    return@PrimaryButton
-                                }
-
-                                if (phone.isBlank()) {
-                                    localError = "Please enter your Sri Lankan mobile number."
-                                    return@PrimaryButton
-                                }
-
-                                // Trigger OTP send
-                                viewModel.requestOtp()
-                            },
-                            isLoading = authState.isLoading,
-                            modifier = Modifier.fillMaxWidth().testTag("signup_continue_button")
-                        )
-                    }
-                    2 -> {
-                        PrimaryButton(
-                            text = if (onboardingState.isFarmerMode) "Verify & Enter Cultivation Details" else "Verify & Complete Registration",
-                            onClick = {
-                                viewModel.verifyOtp()
-                            },
-                            isLoading = authState.isLoading || onboardingState.isSubmitting,
-                            enabled = authState.otpCode.length == 6 && !authState.isLoading && !onboardingState.isSubmitting,
-                            modifier = Modifier.fillMaxWidth().testTag("signup_verify_button")
-                        )
-                    }
-                    3 -> {
-                        PrimaryButton(
-                            text = "Complete & View Produce Listings",
-                            onClick = {
-                                localError = null
-                                if (onboardingState.cultivationAddress.trim().isBlank()) {
-                                    localError = "Please enter your farm / cultivation address."
-                                    return@PrimaryButton
-                                }
-                                if (onboardingState.mainCrops.isEmpty()) {
-                                    localError = "Please select or add at least 1 crop that you cultivate."
-                                    return@PrimaryButton
-                                }
-                                viewModel.submitOnboarding()
-                            },
-                            isLoading = onboardingState.isSubmitting,
-                            enabled = !onboardingState.isSubmitting,
-                            leadingIcon = Icons.Filled.Inventory2,
-                            modifier = Modifier.fillMaxWidth().testTag("signup_save_farm_details_button")
-                        )
-                    }
-                }
-            }
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = AgroSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(AgroSpacing.md)
+                .navigationBarsPadding()
+                .imePadding()
         ) {
-            item {
-                // Step Progress Indicator
-                if (onboardingState.isFarmerMode) {
-                    Row(
+            // Step Progress Bar (1 to 4)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (s in 1..4) {
+                    val isActive = s <= state.currentStep
+                    val isCurrent = s == state.currentStep
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = AgroSpacing.sm),
-                        horizontalArrangement = Arrangement.spacedBy(AgroSpacing.xs),
+                            .weight(1f)
+                            .height(4.dp)
+                            .background(
+                                color = if (isActive) AgroGreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(2.dp)
+                            )
+                    )
+                }
+            }
+
+            Text(
+                text = "Step ${state.currentStep} of 4",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = AgroGreenPrimary,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+            )
+
+            // Global Error Banner
+            if (!state.errorMessage.isNullOrBlank()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        StepIndicator(stepNumber = 1, title = "Account", isActive = step == 1, isCompleted = step > 1, modifier = Modifier.weight(1f))
-                        StepIndicator(stepNumber = 2, title = "SMS OTP", isActive = step == 2, isCompleted = step > 2, modifier = Modifier.weight(1f))
-                        StepIndicator(stepNumber = 3, title = "Farm Details", isActive = step == 3, isCompleted = onboardingState.isComplete, modifier = Modifier.weight(1f))
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = AgroSpacing.sm),
-                        horizontalArrangement = Arrangement.spacedBy(AgroSpacing.sm),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        StepIndicator(stepNumber = 1, title = "Profile Details", isActive = step == 1, isCompleted = step > 1, modifier = Modifier.weight(1f))
-                        StepIndicator(stepNumber = 2, title = "SMS OTP", isActive = step == 2, isCompleted = onboardingState.isComplete, modifier = Modifier.weight(1f))
+                        Icon(
+                            imageVector = Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = state.errorMessage ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
                     }
                 }
             }
 
-            // Error banner if any
-            item {
-                val activeError = localError ?: authState.phoneError ?: authState.otpError ?: onboardingState.errorMessage
-                if (activeError != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        shape = AgroShapes.medium,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ErrorOutline,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = activeError,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                    }
-                }
-            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+                    .padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
+                when (state.currentStep) {
+                    // STEP 1: USERNAME SELECTION WITH DEBOUNCED AVAILABILITY
+                    1 -> {
+                        item {
+                            AgroCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "Choose your AgroMarket handle",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "This will be your unique identifier for direct transactions and login.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
 
-            // STEP 1: Basic Profile Details (Role, Name, NIC, Mobile, Location) - NO Farm Details here!
-            if (step == 1) {
-                item {
-                    SectionHeader(title = "Account Role")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(AgroSpacing.md)
-                    ) {
-                        RoleSelectionCard(
-                            title = "Buyer",
-                            subtitle = "Purchase fresh crops",
-                            icon = Icons.Filled.ShoppingBag,
-                            isSelected = !onboardingState.isFarmerMode,
-                            onClick = { viewModel.setAccountType(isFarmer = false) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RoleSelectionCard(
-                            title = "Farmer",
-                            subtitle = "Sell direct harvest",
-                            icon = Icons.Filled.Agriculture,
-                            isSelected = onboardingState.isFarmerMode,
-                            onClick = { viewModel.setAccountType(isFarmer = true) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
+                                Spacer(modifier = Modifier.height(16.dp))
 
-                item {
-                    SectionHeader(title = "Personal Information")
-                    AgroCard {
-                        OutlinedTextField(
-                            value = onboardingState.fullName,
-                            onValueChange = viewModel::onFullNameChange,
-                            label = { Text("Full Name") },
-                            placeholder = { Text("e.g. Kasun Perera") },
-                            leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                            modifier = Modifier.fillMaxWidth().testTag("signup_fullname_input")
-                        )
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        OutlinedTextField(
-                            value = onboardingState.nic,
-                            onValueChange = viewModel::onNicChange,
-                            label = { Text("National Identity Card (NIC)") },
-                            placeholder = { Text("199012345678 or 901234567V") },
-                            leadingIcon = { Icon(Icons.Filled.Badge, contentDescription = null) },
-                            singleLine = true,
-                            isError = onboardingState.nicError != null,
-                            supportingText = {
-                                Text(onboardingState.nicError ?: "Required for Sri Lankan trading security", style = MaterialTheme.typography.bodySmall)
-                            },
-                            modifier = Modifier.fillMaxWidth().testTag("signup_nic_input")
-                        )
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        OutlinedTextField(
-                            value = authState.phoneInput,
-                            onValueChange = viewModel::onPhoneChange,
-                            label = { Text("Mobile Number (SMS verification)") },
-                            placeholder = { Text("0771234567") },
-                            leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = null) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                            singleLine = true,
-                            supportingText = { Text("Sri Lankan number format (07XXXXXXXX)") },
-                            modifier = Modifier.fillMaxWidth().testTag("signup_phone_input")
-                        )
-                    }
-                }
-
-                item {
-                    SectionHeader(title = "Home Location")
-                    AgroCard {
-                        // District selector
-                        val selectedDistrict = onboardingState.districts.find { it.id == onboardingState.selectedDistrictId }
-                        ExposedDropdownMenuBox(
-                            expanded = districtMenuExpanded,
-                            onExpandedChange = { districtMenuExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = selectedDistrict?.name ?: "Select District",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Home District") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = districtMenuExpanded) },
-                                modifier = Modifier.menuAnchor().fillMaxWidth()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = districtMenuExpanded,
-                                onDismissRequest = { districtMenuExpanded = false }
-                            ) {
-                                onboardingState.districts.forEach { dist ->
-                                    DropdownMenuItem(
-                                        text = { Text(dist.name) },
-                                        onClick = {
-                                            viewModel.onDistrictSelected(dist.id)
-                                            districtMenuExpanded = false
+                                OutlinedTextField(
+                                    value = state.username,
+                                    onValueChange = { viewModel.onSignUpUsernameChange(it) },
+                                    label = { Text("Username") },
+                                    placeholder = { Text("e.g. green_valley_farm") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Filled.AlternateEmail,
+                                            contentDescription = null,
+                                            tint = AgroGreenPrimary
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        when (state.usernameStatus) {
+                                            UsernameCheckStatus.CHECKING -> {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(20.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = AgroGreenPrimary
+                                                )
+                                            }
+                                            UsernameCheckStatus.AVAILABLE -> {
+                                                Icon(
+                                                    imageVector = Icons.Filled.CheckCircle,
+                                                    contentDescription = "Available",
+                                                    tint = AgroSuccess
+                                                )
+                                            }
+                                            UsernameCheckStatus.TAKEN, UsernameCheckStatus.INVALID -> {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Cancel,
+                                                    contentDescription = "Unavailable",
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            }
+                                            else -> {}
                                         }
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        // City selector
-                        val selectedCity = onboardingState.cities.find { it.id == onboardingState.selectedCityId }
-                        ExposedDropdownMenuBox(
-                            expanded = cityMenuExpanded,
-                            onExpandedChange = { cityMenuExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = if (onboardingState.isLoadingCities) "Loading cities..." else (selectedCity?.name ?: "Select City / DS Division"),
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Home Town / DS Division") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cityMenuExpanded) },
-                                modifier = Modifier.menuAnchor().fillMaxWidth()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = cityMenuExpanded,
-                                onDismissRequest = { cityMenuExpanded = false }
-                            ) {
-                                onboardingState.cities.forEach { c ->
-                                    DropdownMenuItem(
-                                        text = { Text(c.name) },
-                                        onClick = {
-                                            viewModel.onCitySelected(c.id)
-                                            cityMenuExpanded = false
+                                    },
+                                    supportingText = {
+                                        if (!state.usernameError.isNullOrBlank()) {
+                                            Text(
+                                                text = state.usernameError ?: "",
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        } else if (state.usernameStatus == UsernameCheckStatus.AVAILABLE) {
+                                            Text(
+                                                text = "✓ @${state.username} is available!",
+                                                color = AgroSuccess,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        } else {
+                                            Text("3–20 characters. Letters, numbers, and underscores.")
                                         }
-                                    )
-                                }
+                                    },
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_username_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
                             }
                         }
                     }
-                }
-            }
 
-            // STEP 2: Mobile SMS OTP Verification
-            else if (step == 2) {
-                item {
-                    AgroCard {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(AgroSpacing.md),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = AgroSpacing.md)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = AgroGreenContainer,
-                                modifier = Modifier.size(64.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Lock,
-                                        contentDescription = null,
-                                        tint = AgroGreenPrimary,
-                                        modifier = Modifier.size(32.dp)
+                    // STEP 2: PERSONAL DETAILS & ROLE
+                    2 -> {
+                        item {
+                            AgroCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "Your Personal Details",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                OutlinedTextField(
+                                    value = state.fullName,
+                                    onValueChange = { viewModel.onSignUpFullNameChange(it) },
+                                    label = { Text("Full Legal Name") },
+                                    placeholder = { Text("e.g. Bandara Jayasundara") },
+                                    leadingIcon = { Icon(Icons.Filled.Badge, contentDescription = null, tint = AgroGreenPrimary) },
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_fullname_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                OutlinedTextField(
+                                    value = state.nic,
+                                    onValueChange = { viewModel.onSignUpNicChange(it) },
+                                    label = { Text("National Identity Card (NIC)") },
+                                    placeholder = { Text("123456789V or 200012345678") },
+                                    leadingIcon = { Icon(Icons.Filled.CreditCard, contentDescription = null, tint = AgroGreenPrimary) },
+                                    supportingText = {
+                                        if (!state.nicError.isNullOrBlank()) {
+                                            Text(state.nicError ?: "", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    isError = !state.nicError.isNullOrBlank(),
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_nic_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // District Dropdown
+                                ExposedDropdownMenuBox(
+                                    expanded = districtMenuExpanded,
+                                    onExpandedChange = { districtMenuExpanded = it }
+                                ) {
+                                    val selectedDistrict = state.districts.find { it.id == state.selectedDistrictId }?.name ?: "Select District"
+                                    OutlinedTextField(
+                                        value = selectedDistrict,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text("Home District") },
+                                        leadingIcon = { Icon(Icons.Filled.LocationOn, contentDescription = null, tint = AgroGreenPrimary) },
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = districtMenuExpanded) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .menuAnchor(MenuAnchorType.PrimaryNotEditable, true)
+                                            .testTag("signup_district_picker"),
+                                        shape = RoundedCornerShape(12.dp)
                                     )
-                                }
-                            }
-
-                            Text(
-                                text = "Verification Code Sent",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-
-                            Text(
-                                text = "Enter the 6-digit SMS code sent to ${authState.phoneInput}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-
-                            OutlinedTextField(
-                                value = authState.otpCode,
-                                onValueChange = viewModel::onOtpChange,
-                                label = { Text("6-digit Code") },
-                                placeholder = { Text("123456") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                textStyle = MaterialTheme.typography.headlineSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 8.sp,
-                                    textAlign = TextAlign.Center
-                                ),
-                                isError = authState.otpError != null,
-                                supportingText = {
-                                    if (authState.otpError != null) {
-                                        Text(authState.otpError!!, color = MaterialTheme.colorScheme.error)
-                                    } else if (!authState.otpStatusMessage.isNullOrBlank()) {
-                                        Text(authState.otpStatusMessage!!, color = AgroGreenPrimary)
+                                    ExposedDropdownMenu(
+                                        expanded = districtMenuExpanded,
+                                        onDismissRequest = { districtMenuExpanded = false }
+                                    ) {
+                                        state.districts.forEach { dist ->
+                                            DropdownMenuItem(
+                                                text = { Text(dist.name) },
+                                                onClick = {
+                                                    viewModel.onDistrictSelected(dist.id)
+                                                    districtMenuExpanded = false
+                                                }
+                                            )
+                                        }
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth().testTag("signup_otp_input")
-                            )
+                                }
 
-                            // Resend button
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                if (authState.resendCountdown > 0) {
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // City Dropdown
+                                ExposedDropdownMenuBox(
+                                    expanded = cityMenuExpanded,
+                                    onExpandedChange = { cityMenuExpanded = it }
+                                ) {
+                                    val selectedCity = state.cities.find { it.id == state.selectedCityId }?.name ?: "Select City"
+                                    OutlinedTextField(
+                                        value = selectedCity,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text("Nearest Town / City") },
+                                        leadingIcon = { Icon(Icons.Filled.NearMe, contentDescription = null, tint = AgroGreenPrimary) },
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cityMenuExpanded) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .menuAnchor(MenuAnchorType.PrimaryNotEditable, true)
+                                            .testTag("signup_city_picker"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    ExposedDropdownMenu(
+                                        expanded = cityMenuExpanded,
+                                        onDismissRequest = { cityMenuExpanded = false }
+                                    ) {
+                                        state.cities.forEach { c ->
+                                            DropdownMenuItem(
+                                                text = { Text(c.name) },
+                                                onClick = {
+                                                    viewModel.onSignUpCitySelected(c.id)
+                                                    cityMenuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // Role Selector: Buyer vs Farmer
+                                Text(
+                                    text = "Account Role",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = !state.isFarmer,
+                                        onClick = { viewModel.setSignUpAccountType(false) },
+                                        label = { Text("Buyer / Consumer") },
+                                        leadingIcon = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) },
+                                        modifier = Modifier.weight(1f).testTag("signup_role_buyer")
+                                    )
+                                    FilterChip(
+                                        selected = state.isFarmer,
+                                        onClick = { viewModel.setSignUpAccountType(true) },
+                                        label = { Text("Farmer / Producer") },
+                                        leadingIcon = { Icon(Icons.Filled.Agriculture, contentDescription = null) },
+                                        modifier = Modifier.weight(1f).testTag("signup_role_farmer")
+                                    )
+                                }
+
+                                // Farmer cultivation details if farmer selected
+                                if (state.isFarmer) {
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        text = "Resend OTP in ${authState.resendCountdown}s",
+                                        text = "Farm & Cultivation Details",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = AgroGreenPrimary)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    OutlinedTextField(
+                                        value = state.cultivationAddress,
+                                        onValueChange = { viewModel.onSignUpCultivationAddressChange(it) },
+                                        label = { Text("Farm / Cultivation Address") },
+                                        placeholder = { Text("e.g. 42 Farm Road, Dambulla") },
+                                        modifier = Modifier.fillMaxWidth().testTag("signup_farm_address"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Text(
+                                        text = "Main Crops Grown",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                                    )
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        viewModel.commonCropSuggestions.take(8).forEach { crop ->
+                                            val isSelected = state.mainCrops.contains(crop)
+                                            FilterChip(
+                                                selected = isSelected,
+                                                onClick = {
+                                                    if (isSelected) viewModel.removeSignUpCropChip(crop)
+                                                    else viewModel.addSignUpCropChip(crop)
+                                                },
+                                                label = { Text(crop) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // STEP 3: MOBILE NUMBER & PASSWORD + CONFIRM
+                    3 -> {
+                        item {
+                            AgroCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "Security & Verification Mobile",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                OutlinedTextField(
+                                    value = state.phone,
+                                    onValueChange = { viewModel.onSignUpPhoneChange(it) },
+                                    label = { Text("Mobile Number (SMS verification)") },
+                                    placeholder = { Text("0771234567") },
+                                    leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = null, tint = AgroGreenPrimary) },
+                                    supportingText = {
+                                        if (!state.phoneError.isNullOrBlank()) {
+                                            Text(state.phoneError ?: "", color = MaterialTheme.colorScheme.error)
+                                        } else {
+                                            Text("A 6-digit OTP will be sent to this number.")
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_phone_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                OutlinedTextField(
+                                    value = state.password,
+                                    onValueChange = { viewModel.onSignUpPasswordChange(it) },
+                                    label = { Text("Password (min 8 chars)") },
+                                    leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null, tint = AgroGreenPrimary) },
+                                    trailingIcon = {
+                                        IconButton(onClick = { viewModel.toggleSignUpPasswordVisibility() }) {
+                                            Icon(
+                                                imageVector = if (state.isPasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                                contentDescription = null
+                                            )
+                                        }
+                                    },
+                                    visualTransformation = if (state.isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_password_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                if (state.password.isNotEmpty()) {
+                                    PasswordStrengthIndicator(strength = state.passwordStrength)
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                OutlinedTextField(
+                                    value = state.confirmPassword,
+                                    onValueChange = { viewModel.onSignUpConfirmPasswordChange(it) },
+                                    label = { Text("Confirm Password") },
+                                    leadingIcon = { Icon(Icons.Filled.LockReset, contentDescription = null, tint = AgroGreenPrimary) },
+                                    trailingIcon = {
+                                        IconButton(onClick = { viewModel.toggleSignUpConfirmPasswordVisibility() }) {
+                                            Icon(
+                                                imageVector = if (state.isConfirmPasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                                contentDescription = null
+                                            )
+                                        }
+                                    },
+                                    visualTransformation = if (state.isConfirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                    supportingText = {
+                                        if (!state.passwordError.isNullOrBlank()) {
+                                            Text(state.passwordError ?: "", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_confirm_password_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // STEP 4: OTP VERIFICATION
+                    4 -> {
+                        item {
+                            AgroCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "Enter 6-digit Code",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "We sent an SMS code to ${state.phone}.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                OutlinedTextField(
+                                    value = state.otpCode,
+                                    onValueChange = { viewModel.onSignUpOtpChange(it) },
+                                    label = { Text("Verification Code") },
+                                    placeholder = { Text("123456") },
+                                    leadingIcon = { Icon(Icons.Filled.Security, contentDescription = null, tint = AgroGreenPrimary) },
+                                    supportingText = {
+                                        if (!state.otpError.isNullOrBlank()) {
+                                            Text(state.otpError ?: "", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("signup_otp_input"),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (state.resendCountdown > 0) "Resend in ${state.resendCountdown}s" else "Didn't receive code?",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                } else {
-                                    TextButton(
-                                        onClick = { viewModel.requestOtp() },
-                                        enabled = !authState.isLoading
-                                    ) {
-                                        Text("Resend OTP", fontWeight = FontWeight.Bold, color = AgroGreenPrimary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // STEP 3: Cultivation Details (Farmer only, entered after verification!)
-            else if (step == 3) {
-                item {
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Filled.Agriculture,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Your mobile is verified! Now enter your cultivation details to start listing and selling your harvest.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-                    }
-                }
-
-                item {
-                    SectionHeader(title = "Cultivation Location")
-                    AgroCard {
-                        // Cultivation District
-                        val cultDistrict = onboardingState.districts.find { it.id == onboardingState.cultivationDistrictId }
-                        ExposedDropdownMenuBox(
-                            expanded = cultDistrictMenuExpanded,
-                            onExpandedChange = { cultDistrictMenuExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = cultDistrict?.name ?: "Select Cultivation District",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Cultivation District") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cultDistrictMenuExpanded) },
-                                modifier = Modifier.menuAnchor().fillMaxWidth().testTag("cultivation_district_select")
-                            )
-                            ExposedDropdownMenu(
-                                expanded = cultDistrictMenuExpanded,
-                                onDismissRequest = { cultDistrictMenuExpanded = false }
-                            ) {
-                                onboardingState.districts.forEach { dist ->
-                                    DropdownMenuItem(
-                                        text = { Text(dist.name) },
-                                        onClick = {
-                                            viewModel.onCultivationDistrictSelected(dist.id)
-                                            cultDistrictMenuExpanded = false
+                                    if (state.resendCountdown == 0) {
+                                        TextButton(onClick = { viewModel.requestSignUpOtp() }) {
+                                            Text("Resend Code", color = AgroGreenPrimary)
                                         }
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        // Cultivation City
-                        val cultCity = onboardingState.cultivationCities.find { it.id == onboardingState.cultivationCityId }
-                        ExposedDropdownMenuBox(
-                            expanded = cultCityMenuExpanded,
-                            onExpandedChange = { cultCityMenuExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = cultCity?.name ?: "Select Cultivation Town",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Cultivation Town / DS Division") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cultCityMenuExpanded) },
-                                modifier = Modifier.menuAnchor().fillMaxWidth().testTag("cultivation_city_select")
-                            )
-                            ExposedDropdownMenu(
-                                expanded = cultCityMenuExpanded,
-                                onDismissRequest = { cultCityMenuExpanded = false }
-                            ) {
-                                onboardingState.cultivationCities.forEach { city ->
-                                    DropdownMenuItem(
-                                        text = { Text(city.name) },
-                                        onClick = {
-                                            viewModel.onCultivationCitySelected(city.id)
-                                            cultCityMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        OutlinedTextField(
-                            value = onboardingState.cultivationAddress,
-                            onValueChange = viewModel::onCultivationAddressChange,
-                            label = { Text("Cultivation / Farm Address") },
-                            placeholder = { Text("e.g. Gam Udawa Road, Dambulla") },
-                            leadingIcon = { Icon(Icons.Filled.HomeWork, contentDescription = null) },
-                            singleLine = false,
-                            maxLines = 2,
-                            modifier = Modifier.fillMaxWidth().testTag("signup_farm_address_input")
-                        )
-                    }
-                }
-
-                item {
-                    SectionHeader(title = "Crops Cultivated")
-                    AgroCard {
-                        Text(
-                            text = "Select all crops you grow or sell:",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(AgroSpacing.xs))
-
-                        // Common suggestions
-                        val suggestions = listOf(
-                            "Tomato", "Carrot", "Beans", "Cabbage", "Pumpkin",
-                            "Green Chilli", "Big Onion", "Red Onion", "Potato", "Beetroot",
-                            "Banana", "Papaya", "Eggplant", "Leeks", "Spices"
-                        )
-
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            suggestions.forEach { crop ->
-                                val isSelected = onboardingState.mainCrops.contains(crop)
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = {
-                                        if (isSelected) viewModel.removeCropChip(crop) else viewModel.addCropChip(crop)
-                                    },
-                                    label = { Text(crop) },
-                                    leadingIcon = if (isSelected) {
-                                        { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                    } else null
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        // Custom crop input
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            OutlinedTextField(
-                                value = onboardingState.customCropInput,
-                                onValueChange = viewModel::onCustomCropInputChange,
-                                label = { Text("Add Another Crop") },
-                                placeholder = { Text("e.g. Dragon Fruit") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f).testTag("custom_crop_input")
-                            )
-                            Button(
-                                onClick = {
-                                    if (onboardingState.customCropInput.isNotBlank()) {
-                                        viewModel.addCropChip(onboardingState.customCropInput)
-                                    }
-                                },
-                                enabled = onboardingState.customCropInput.isNotBlank(),
-                                modifier = Modifier.testTag("add_custom_crop_button")
-                            ) {
-                                Text("Add")
-                            }
-                        }
-
-                        if (onboardingState.mainCrops.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(AgroSpacing.xs))
-                            Text(
-                                text = "Selected (${onboardingState.mainCrops.size}): ${onboardingState.mainCrops.joinToString(", ")}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = AgroGreenPrimary,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-
-                item {
-                    SectionHeader(title = "Farm Size & Pickup Details")
-                    AgroCard {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            OutlinedTextField(
-                                value = onboardingState.landSize,
-                                onValueChange = viewModel::onLandSizeChange,
-                                label = { Text("Land Size") },
-                                placeholder = { Text("e.g. 2.5") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                modifier = Modifier.weight(1f).testTag("signup_land_size_input")
-                            )
-
-                            var unitMenuExpanded by remember { mutableStateOf(false) }
-                            ExposedDropdownMenuBox(
-                                expanded = unitMenuExpanded,
-                                onExpandedChange = { unitMenuExpanded = it },
-                                modifier = Modifier.width(130.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = onboardingState.landUnit,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Unit") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = unitMenuExpanded) },
-                                    modifier = Modifier.menuAnchor()
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = unitMenuExpanded,
-                                    onDismissRequest = { unitMenuExpanded = false }
-                                ) {
-                                    listOf("acres", "perches", "hectares").forEach { u ->
-                                        DropdownMenuItem(
-                                            text = { Text(u) },
-                                            onClick = {
-                                                viewModel.onLandUnitChange(u)
-                                                unitMenuExpanded = false
-                                            }
-                                        )
                                     }
                                 }
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(AgroSpacing.sm))
-
-                        OutlinedTextField(
-                            value = onboardingState.defaultPickupLandmark,
-                            onValueChange = viewModel::onDefaultPickupLandmarkChange,
-                            label = { Text("Pickup Landmark (Optional)") },
-                            placeholder = { Text("e.g. Near Agrarian Service Centre") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("signup_pickup_landmark_input")
-                        )
                     }
                 }
             }
 
-            item {
-                Spacer(modifier = Modifier.height(AgroSpacing.xxl))
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepIndicator(
-    stepNumber: Int,
-    title: String,
-    isActive: Boolean,
-    isCompleted: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        color = if (isActive) AgroGreenContainer else if (isCompleted) AgroGreenContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-        shape = AgroShapes.medium,
-        modifier = modifier
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = AgroShapes.pill,
-                color = if (isActive || isCompleted) AgroGreenPrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                modifier = Modifier.size(20.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (isCompleted) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    } else {
-                        Text(
-                            text = stepNumber.toString(),
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                fontSize = 10.sp
-                            )
-                        )
+            // Bottom Sticky Next / Submit Action Bar
+            StickyBottomCTA {
+                PrimaryButton(
+                    text = when (state.currentStep) {
+                        1 -> "Next: Profile Details"
+                        2 -> "Next: Security"
+                        3 -> "Send Verification Code"
+                        else -> "Create Account & Start"
+                    },
+                    onClick = {
+                        when (state.currentStep) {
+                            1 -> viewModel.proceedFromUsernameStep()
+                            2 -> viewModel.proceedFromDetailsStep()
+                            3 -> viewModel.requestSignUpOtp()
+                            4 -> viewModel.verifySignUpOtp { isFarmer ->
+                                if (isFarmer) onFarmerSignUpSuccess() else onSignUpSuccess()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("signup_action_button"),
+                    isLoading = state.isLoading,
+                    enabled = when (state.currentStep) {
+                        1 -> state.usernameStatus == UsernameCheckStatus.AVAILABLE
+                        2 -> state.fullName.isNotBlank() && state.nic.isNotBlank()
+                        3 -> state.phone.isNotBlank() && state.password.length >= 8 && state.password == state.confirmPassword
+                        4 -> state.otpCode.length == 6
+                        else -> true
                     }
-                }
-            }
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isActive || isCompleted) AgroGreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-                maxLines = 1
-            )
-        }
-    }
-}
-
-@Composable
-private fun RoleSelectionCard(
-    title: String,
-    subtitle: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = onClick,
-        shape = AgroShapes.card,
-        color = if (isSelected) AgroGreenContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(
-            width = if (isSelected) 2.dp else 1.dp,
-            color = if (isSelected) AgroGreenPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-        ),
-        modifier = modifier
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (isSelected) AgroGreenPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = if (isSelected) AgroGreenPrimary else MaterialTheme.colorScheme.onSurface
                 )
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            }
         }
     }
 }

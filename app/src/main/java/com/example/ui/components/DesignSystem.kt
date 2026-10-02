@@ -399,15 +399,16 @@ fun StatusChip(
 ) {
     val cleanStatus = status.lowercase().trim()
     val (bgColor, textColor, icon, label) = when (cleanStatus) {
-        "requested" -> Quadruple(Color(0xFFFFF9C4), Color(0xFFF57F17), Icons.Filled.Pending, "Requested")
-        "accepted" -> Quadruple(Color(0xFFE1F5FE), Color(0xFF0288D1), Icons.Filled.CheckCircle, "Accepted")
-        "paid" -> Quadruple(Color(0xFFE8F5E9), Color(0xFF2E7D32), Icons.Filled.Payment, "Paid")
+        "awaiting payment", "awaiting_payment", "requested" -> Quadruple(Color(0xFFFFF8E1), Color(0xFFF57F17), Icons.Filled.Schedule, "Awaiting payment")
+        "paid" -> Quadruple(Color(0xFFE3F2FD), Color(0xFF1976D2), Icons.Filled.Payment, "Paid")
+        "accepted" -> Quadruple(Color(0xFFE8EAF6), Color(0xFF3949AB), Icons.Filled.ThumbUp, "Accepted")
         "ready" -> Quadruple(Color(0xFFE0F2F1), Color(0xFF00796B), Icons.Filled.Inventory, "Ready")
-        "dispatched" -> Quadruple(Color(0xFFEDE7F6), Color(0xFF512DA8), Icons.Filled.LocalShipping, "Dispatched")
-        "delivered" -> Quadruple(Color(0xFFC8E6C9), Color(0xFF1B5E20), Icons.Filled.DoneAll, "Delivered")
-        "completed" -> Quadruple(Color(0xFFDCEDC8), Color(0xFF33691E), Icons.Filled.Verified, "Completed")
-        "cancelled" -> Quadruple(Color(0xFFFFEBEE), Color(0xFFC62828), Icons.Filled.Cancel, "Cancelled")
-        "rejected" -> Quadruple(Color(0xFFFFEBEE), Color(0xFFC62828), Icons.Filled.Block, "Rejected")
+        "out for delivery", "out_for_delivery", "dispatched" -> Quadruple(Color(0xFFF3E5F5), Color(0xFF8E24AA), Icons.Filled.LocalShipping, "Out for delivery")
+        "delivered" -> Quadruple(Color(0xFFE8F5E9), Color(0xFF43A047), Icons.Filled.DoneAll, "Delivered")
+        "completed" -> Quadruple(Color(0xFFC8E6C9), Color(0xFF2E7D32), Icons.Filled.Verified, "Completed")
+        "cancelled" -> Quadruple(Color(0xFFFFEBEE), Color(0xFFD32F2F), Icons.Filled.Cancel, "Cancelled")
+        "refund pending", "refund_pending" -> Quadruple(Color(0xFFFBE9E7), Color(0xFFE64A19), Icons.Filled.CurrencyExchange, "Refund pending")
+        "rejected" -> Quadruple(Color(0xFFFFEBEE), Color(0xFFD32F2F), Icons.Filled.Block, "Rejected")
         "expired" -> Quadruple(Color(0xFFEEEEEE), Color(0xFF616161), Icons.Filled.TimerOff, "Expired")
         "disputed" -> Quadruple(Color(0xFFFFE0B2), Color(0xFFE65100), Icons.Filled.ReportProblem, "Disputed")
         "refunded" -> Quadruple(Color(0xFFE0E0E0), Color(0xFF424242), Icons.Filled.CurrencyExchange, "Refunded")
@@ -435,6 +436,117 @@ fun StatusChip(
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = textColor
             )
+        }
+    }
+}
+
+data class TimelineStep(
+    val title: String,
+    val timestamp: String? = null,
+    val subtitle: String? = null,
+    val isCompleted: Boolean,
+    val isCurrent: Boolean,
+    val isTerminalFailed: Boolean = false
+)
+
+@Composable
+fun VerticalOrderTimelineStepper(
+    steps: List<TimelineStep>,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
+    ) {
+        steps.forEachIndexed { index, step ->
+            val isLast = index == steps.size - 1
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                // Dot and Line Column
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(28.dp)
+                ) {
+                    val dotColor = when {
+                        step.isTerminalFailed -> MaterialTheme.colorScheme.error
+                        step.isCompleted -> AgroGreenPrimary
+                        step.isCurrent -> AgroAmberAccent
+                        else -> MaterialTheme.colorScheme.outlineVariant
+                    }
+                    val dotIcon = when {
+                        step.isTerminalFailed -> Icons.Filled.Close
+                        step.isCompleted -> Icons.Filled.Check
+                        step.isCurrent -> Icons.Filled.RadioButtonChecked
+                        else -> Icons.Filled.RadioButtonUnchecked
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(dotColor.copy(alpha = if (step.isCompleted || step.isCurrent || step.isTerminalFailed) 0.15f else 0.08f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = dotIcon,
+                            contentDescription = null,
+                            tint = dotColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+
+                    if (!isLast) {
+                        val lineColor = if (step.isCompleted && !step.isTerminalFailed) AgroGreenPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        Box(
+                            modifier = Modifier
+                                .width(2.dp)
+                                .height(32.dp)
+                                .background(lineColor)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // Step content
+                Column(modifier = Modifier.weight(1f).padding(bottom = if (isLast) 0.dp else 16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = step.title,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (step.isCurrent || step.isCompleted || step.isTerminalFailed) FontWeight.Bold else FontWeight.Normal,
+                                color = when {
+                                    step.isTerminalFailed -> MaterialTheme.colorScheme.error
+                                    step.isCurrent -> AgroAmberAccent
+                                    step.isCompleted -> MaterialTheme.colorScheme.onSurface
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        )
+                        if (!step.timestamp.isNullOrBlank()) {
+                            Text(
+                                text = step.timestamp,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (!step.subtitle.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = step.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (step.isTerminalFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -38,6 +38,7 @@ class SessionManager(private val context: Context) {
         private val KEY_CULTIVATION_ADDRESS = stringPreferencesKey("farmer_cult_address")
         private val KEY_USER_EMAIL = stringPreferencesKey("user_email")
         private val KEY_USER_PASSWORD = stringPreferencesKey("user_password")
+        private val KEY_USERNAME = stringPreferencesKey("user_username")
     }
 
     private val _sessionExpiredEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -49,6 +50,7 @@ class SessionManager(private val context: Context) {
 
     val authTokenFlow: Flow<String?> = context.dataStore.data.map { it[KEY_AUTH_TOKEN] }
     val userIdFlow: Flow<String?> = context.dataStore.data.map { it[KEY_USER_ID] }
+    val usernameFlow: Flow<String?> = context.dataStore.data.map { it[KEY_USERNAME] }
     val isFarmerFlow: Flow<Boolean> = context.dataStore.data.map { it[KEY_IS_FARMER] ?: false }
     val appModeFlow: Flow<AppMode> = context.dataStore.data.map {
         val modeStr = it[KEY_APP_MODE] ?: AppMode.BUYING.name
@@ -73,7 +75,8 @@ class SessionManager(private val context: Context) {
         refreshToken: String? = null,
         expiresInSeconds: Long? = null,
         email: String? = null,
-        password: String? = null
+        password: String? = null,
+        username: String? = null
     ) {
         val cleanDigits = phone.replace(Regex("[^0-9]"), "").let {
             if (it.startsWith("0")) "94" + it.substring(1) else if (it.startsWith("7")) "94$it" else it
@@ -91,6 +94,9 @@ class SessionManager(private val context: Context) {
             prefs[KEY_IS_FARMER] = isFarmer
             prefs[KEY_USER_EMAIL] = resolvedEmail
             prefs[KEY_USER_PASSWORD] = resolvedPassword
+            if (!username.isNullOrBlank()) {
+                prefs[KEY_USERNAME] = username
+            }
             if (!refreshToken.isNullOrBlank()) {
                 prefs[KEY_REFRESH_TOKEN] = refreshToken
             }
@@ -157,6 +163,16 @@ class SessionManager(private val context: Context) {
 
     suspend fun getUserName(): String? {
         return context.dataStore.data.first()[KEY_USER_NAME]
+    }
+
+    suspend fun getUsername(): String? {
+        return context.dataStore.data.first()[KEY_USERNAME]
+    }
+
+    suspend fun saveUsername(username: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_USERNAME] = username
+        }
     }
 
     suspend fun getUserPhone(): String? {

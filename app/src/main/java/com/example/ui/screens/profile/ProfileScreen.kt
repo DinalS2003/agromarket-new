@@ -358,6 +358,18 @@ fun ProfileScreen(
                 }
             }
 
+            // Change Password
+            item {
+                OutlinedButton(
+                    onClick = { viewModel.openChangePasswordDialog() },
+                    modifier = Modifier.fillMaxWidth().testTag("profile_change_password_button")
+                ) {
+                    Icon(Icons.Filled.LockReset, contentDescription = null, tint = AgroGreenPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Change Password")
+                }
+            }
+
             // Logout
             item {
                 OutlinedButton(
@@ -640,6 +652,110 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = viewModel::closeFarmerRegistrationDialog) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Change Password Dialog
+    if (state.isChangePasswordOpen) {
+        AlertDialog(
+            onDismissRequest = viewModel::closeChangePasswordDialog,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.LockReset, contentDescription = null, tint = AgroGreenPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Change Password", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (state.changePasswordSuccess) {
+                        Surface(
+                            color = AgroGreenContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Password updated successfully!",
+                                color = AgroGreenOnContainer,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
+                    if (!state.changePasswordError.isNullOrBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = state.changePasswordError ?: "",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = state.oldPasswordInput,
+                        onValueChange = viewModel::onOldPasswordChange,
+                        label = { Text("Current Password") },
+                        visualTransformation = if (state.isChangePasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("change_old_password_input")
+                    )
+
+                    OutlinedTextField(
+                        value = state.newPasswordInput,
+                        onValueChange = viewModel::onNewPasswordChange,
+                        label = { Text("New Password (min 8 chars)") },
+                        visualTransformation = if (state.isChangePasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = viewModel::toggleChangePasswordVisibility) {
+                                Icon(
+                                    imageVector = if (state.isChangePasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = null
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("change_new_password_input")
+                    )
+
+                    OutlinedTextField(
+                        value = state.confirmNewPasswordInput,
+                        onValueChange = viewModel::onConfirmNewPasswordChange,
+                        label = { Text("Confirm New Password") },
+                        visualTransformation = if (state.isChangePasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("change_confirm_password_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = viewModel::submitChangePassword,
+                    enabled = !state.isChangingPassword && state.oldPasswordInput.isNotBlank() && state.newPasswordInput.length >= 8 && state.newPasswordInput == state.confirmNewPasswordInput,
+                    colors = ButtonDefaults.buttonColors(containerColor = AgroGreenPrimary),
+                    modifier = Modifier.testTag("submit_change_password_button")
+                ) {
+                    if (state.isChangingPassword) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = androidx.compose.ui.graphics.Color.White, strokeWidth = 2.dp)
+                    } else {
+                        Text("Update Password")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::closeChangePasswordDialog) {
                     Text("Cancel")
                 }
             }

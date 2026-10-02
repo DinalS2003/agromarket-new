@@ -293,6 +293,9 @@ class MainActivity : ComponentActivity() {
                                             popUpTo("login") { inclusive = true }
                                         }
                                     },
+                                    onNavigateToSignUp = {
+                                        navController.navigate("signup")
+                                    },
                                     onBackClick = {
                                         navController.popBackStack()
                                     }
@@ -849,7 +852,7 @@ class MainActivity : ComponentActivity() {
                                         authViewModel.resetAuth()
                                         scope.launch {
                                             app.sessionManager.clearSession()
-                                            navController.navigate("login") {
+                                            navController.navigate("welcome") {
                                                 popUpTo(0) { inclusive = true }
                                             }
                                         }

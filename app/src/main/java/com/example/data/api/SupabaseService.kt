@@ -52,6 +52,24 @@ interface SupabaseService {
     suspend fun getFarmerStats(@Query("farmer_id") idFilter: String, @Query("select") select: String = "*"): Response<List<FarmerStats>>
 
     // RPC Functions
+    @POST("rest/v1/rpc/check_username_available")
+    suspend fun checkUsernameAvailable(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<Boolean>
+
+    @POST("rest/v1/rpc/lookup_login_account")
+    suspend fun lookupLoginAccount(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<@JvmSuppressWildcards Map<String, Any>>
+
+    @POST("rest/v1/rpc/register_user_with_credentials")
+    suspend fun registerUserWithCredentials(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<@JvmSuppressWildcards Map<String, Any>>
+
+    @POST("rest/v1/rpc/upgrade_user_credentials")
+    suspend fun upgradeUserCredentials(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<@JvmSuppressWildcards Map<String, Any>>
+
+    @POST("rest/v1/rpc/reset_user_password")
+    suspend fun resetUserPassword(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<@JvmSuppressWildcards Map<String, Any>>
+
+    @POST("rest/v1/rpc/change_user_password")
+    suspend fun changeUserPassword(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<@JvmSuppressWildcards Map<String, Any>>
+
     @POST("rest/v1/rpc/register_profile")
     suspend fun registerProfile(@Body body: @JvmSuppressWildcards Map<String, Any>): Response<@JvmSuppressWildcards Map<String, Any>>
 

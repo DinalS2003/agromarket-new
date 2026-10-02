@@ -53,6 +53,15 @@ data class ProfileUiState(
     val isRegisteringFarmer: Boolean = false,
     val farmerRegisterSuccess: Boolean = false,
     val farmerRegisterError: String? = null,
+    // Change Password Dialog
+    val isChangePasswordOpen: Boolean = false,
+    val oldPasswordInput: String = "",
+    val newPasswordInput: String = "",
+    val confirmNewPasswordInput: String = "",
+    val isChangePasswordVisible: Boolean = false,
+    val changePasswordError: String? = null,
+    val isChangingPassword: Boolean = false,
+    val changePasswordSuccess: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -361,6 +370,81 @@ class ProfileViewModel(
                     it.copy(
                         isRegisteringFarmer = false,
                         farmerRegisterError = err.toUserFriendlyMessage("Could not complete farmer registration. Please try again.")
+                    )
+                }
+            }
+        }
+    }
+
+    fun openChangePasswordDialog() {
+        _uiState.update {
+            it.copy(
+                isChangePasswordOpen = true,
+                oldPasswordInput = "",
+                newPasswordInput = "",
+                confirmNewPasswordInput = "",
+                changePasswordError = null,
+                changePasswordSuccess = false
+            )
+        }
+    }
+
+    fun closeChangePasswordDialog() {
+        _uiState.update { it.copy(isChangePasswordOpen = false) }
+    }
+
+    fun onOldPasswordChange(text: String) {
+        _uiState.update { it.copy(oldPasswordInput = text, changePasswordError = null) }
+    }
+
+    fun onNewPasswordChange(text: String) {
+        _uiState.update { it.copy(newPasswordInput = text, changePasswordError = null) }
+    }
+
+    fun onConfirmNewPasswordChange(text: String) {
+        _uiState.update { it.copy(confirmNewPasswordInput = text, changePasswordError = null) }
+    }
+
+    fun toggleChangePasswordVisibility() {
+        _uiState.update { it.copy(isChangePasswordVisible = !it.isChangePasswordVisible) }
+    }
+
+    fun submitChangePassword() {
+        val s = _uiState.value
+        val oldP = s.oldPasswordInput.trim()
+        val newP = s.newPasswordInput.trim()
+        val confP = s.confirmNewPasswordInput.trim()
+
+        if (oldP.isEmpty()) {
+            _uiState.update { it.copy(changePasswordError = "Please enter your current password.") }
+            return
+        }
+        if (newP.length < 8) {
+            _uiState.update { it.copy(changePasswordError = "New password must be at least 8 characters long.") }
+            return
+        }
+        if (newP != confP) {
+            _uiState.update { it.copy(changePasswordError = "New passwords do not match.") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isChangingPassword = true, changePasswordError = null) }
+            val res = repository.changeUserPassword(oldP, newP)
+            res.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        isChangingPassword = false,
+                        changePasswordSuccess = true
+                    )
+                }
+                kotlinx.coroutines.delay(1200)
+                closeChangePasswordDialog()
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isChangingPassword = false,
+                        changePasswordError = err.message ?: "Failed to change password. Please check your current password."
                     )
                 }
             }
