@@ -17,6 +17,9 @@ local.properties
 .env
 debug.keystore
 
+# Supabase CLI local state
+supabase/.temp/
+
 # Node / web
 node_modules/
 dist/

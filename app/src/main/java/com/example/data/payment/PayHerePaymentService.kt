@@ -35,9 +35,12 @@ class PayHerePaymentService(
 
     companion object {
         const val CHECKOUT_URL = "https://sandbox.payhere.lk/pay/checkout"
-        const val BASE_DOMAIN = "https://checkout.agromarket.lk/"
-        const val RETURN_URL = "https://checkout.agromarket.lk/payhere/return"
-        const val CANCEL_URL = "https://checkout.agromarket.lk/payhere/cancel"
+        // Single source of truth for the PayHere domain entry (must match the registered
+        // domain for merchant 1238313 in PayHere Dashboard -> Integrations -> Domains).
+        const val BASE_HOST = "https://agromarket.com"
+        const val BASE_DOMAIN = "$BASE_HOST/"
+        const val RETURN_URL = "$BASE_HOST/payment/return"
+        const val CANCEL_URL = "$BASE_HOST/payment/cancel"
     }
 
     suspend fun preparePaymentForm(

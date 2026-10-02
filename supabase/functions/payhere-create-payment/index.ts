@@ -163,11 +163,14 @@ serve(async (req: Request) => {
     const currency = "LKR";
     const itemsDescription = `${order.quantity_kg} kg ${order.crop_name} (${order.order_number})`;
 
-    const merchantId = Deno.env.get("PAYHERE_MERCHANT_ID");
-    const merchantSecret = Deno.env.get("PAYHERE_MERCHANT_SECRET");
-    const notifyUrl = Deno.env.get("PAYHERE_NOTIFY_URL") || "https://wqqvikjsfbcprueivxzn.supabase.co/functions/v1/payhere-notify";
-    const returnUrl = "https://checkout.agromarket.lk/payhere/return";
-    const cancelUrl = "https://checkout.agromarket.lk/payhere/cancel";
+    const merchantId = Deno.env.get("PAYHERE_MERCHANT_ID")?.trim();
+    const merchantSecret = Deno.env.get("PAYHERE_MERCHANT_SECRET")?.trim();
+    const notifyUrl = (Deno.env.get("PAYHERE_NOTIFY_URL") || "https://wqqvikjsfbcprueivxzn.supabase.co/functions/v1/payhere-notify").trim();
+    // Must exactly match the WebView base host (PayHerePaymentService.BASE_HOST) and the
+    // domain entry registered against this merchant ID in the PayHere sandbox dashboard.
+    const baseHost = "https://agromarket.com";
+    const returnUrl = `${baseHost}/payment/return`;
+    const cancelUrl = `${baseHost}/payment/cancel`;
 
     if (!merchantId || !merchantSecret) {
       throw new Error("Missing required PayHere environment configuration (PAYHERE_MERCHANT_ID, PAYHERE_MERCHANT_SECRET)");

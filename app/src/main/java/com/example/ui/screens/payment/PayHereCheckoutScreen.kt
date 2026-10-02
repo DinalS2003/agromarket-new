@@ -125,8 +125,6 @@ fun PayHereCheckoutScreen(
                 if (isPaid) {
                     confirmed = true
                     stage = PaymentStage.CONFIRMED
-                    delay(800)
-                    onPaymentSuccess(orderId, totalAmount)
                     break
                 }
             }
@@ -135,13 +133,20 @@ fun PayHereCheckoutScreen(
                 val finalOrder = repository.getOrderById(orderId).getOrNull()
                 if (finalOrder != null && (finalOrder.status == "paid" || finalOrder.status == "ready" || finalOrder.status == "completed")) {
                     stage = PaymentStage.CONFIRMED
-                    delay(800)
-                    onPaymentSuccess(orderId, totalAmount)
                 } else {
                     stage = PaymentStage.FAILED
                     failureReason = "Payment was submitted, but verification is still pending. Your order remains awaiting payment in My Orders."
                 }
             }
+        }
+    }
+
+    // Separate effect (not keyed on the polling loop above) so it isn't cancelled when
+    // the assignment above changes `stage` and relaunches the LaunchedEffect(stage) block.
+    LaunchedEffect(stage) {
+        if (stage == PaymentStage.CONFIRMED) {
+            delay(800)
+            onPaymentSuccess(orderId, totalAmount)
         }
     }
 
@@ -346,14 +351,14 @@ fun PayHereCheckoutScreen(
                                                 val cancelUrl = PayHerePaymentService.CANCEL_URL
 
                                                 // 1. Exact return URL match -> Confirmation
-                                                if (url.startsWith(returnUrl) || url.contains("checkout.agromarket.lk/payhere/return")) {
+                                                if (url.startsWith(returnUrl)) {
                                                     Log.i(TAG, "[Payment Checkout] Exact return URL detected -> Transitioning to CONFIRMING")
                                                     stage = PaymentStage.CONFIRMING
                                                     return true
                                                 }
 
                                                 // 2. Exact cancel URL match ONLY -> Cancelled
-                                                if (url.startsWith(cancelUrl) || url.contains("checkout.agromarket.lk/payhere/cancel")) {
+                                                if (url.startsWith(cancelUrl)) {
                                                     Log.i(TAG, "[Payment Checkout] Exact cancel URL detected -> Transitioning to CANCELLED")
                                                     stage = PaymentStage.CANCELLED
                                                     onPaymentFailed(orderId, "Payment was cancelled")
@@ -370,7 +375,7 @@ fun PayHereCheckoutScreen(
                                                 if (url.contains("unauthorized_domain") || url.contains("domain_not_allowed")) {
                                                     Log.e(TAG, "[Payment Checkout] Domain not allowed by PayHere Sandbox")
                                                     stage = PaymentStage.FAILED
-                                                    failureReason = "Domain not authorized in PayHere Sandbox. Please add 'checkout.agromarket.lk' in PayHere Dashboard -> Integrations -> Domains."
+                                                    failureReason = "Domain not authorized in PayHere Sandbox. Please add '${PayHerePaymentService.BASE_HOST.removePrefix("https://")}' in PayHere Dashboard -> Integrations -> Domains."
                                                     return true
                                                 }
                                                 if (url.contains("hash_mismatch") || url.contains("invalid_hash")) {

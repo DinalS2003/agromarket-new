@@ -46,8 +46,8 @@ serve(async (req: Request) => {
       return new Response("Missing parameters", { status: 400 });
     }
 
-    const expectedMerchantId = Deno.env.get("PAYHERE_MERCHANT_ID");
-    const merchantSecret = Deno.env.get("PAYHERE_MERCHANT_SECRET");
+    const expectedMerchantId = Deno.env.get("PAYHERE_MERCHANT_ID")?.trim();
+    const merchantSecret = Deno.env.get("PAYHERE_MERCHANT_SECRET")?.trim();
 
     if (!expectedMerchantId || !merchantSecret) {
       console.error("[payhere-notify] Missing PayHere environment configuration");
